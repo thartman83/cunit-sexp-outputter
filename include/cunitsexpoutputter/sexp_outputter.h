@@ -31,9 +31,9 @@ extern "C" {
 
    CU_EXPORT void CU_sexp_run_tests(void);
 
-   CU_EXPORT CU_ErrorCode CU_list_tests(void);
+   CU_EXPORT CU_ErrorCode CU_sexp_list_tests(void);
    
-   CU_EXPORT void CU_set_output(FILE * output);
+   CU_EXPORT void CU_sexp_set_output(FILE * output);
 
 #ifdef __cplusplus
 }

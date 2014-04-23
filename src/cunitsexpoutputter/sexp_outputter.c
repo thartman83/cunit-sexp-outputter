@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <time.h>
 
 #include <CUnit/CUnit.h>
 #include <CUnit/TestDB.h>
@@ -23,16 +26,16 @@
 #include <CUnit/Util.h>
 #include <CUnit/TestRun.h>
 
-#include "sexp_outputter.h"
+#include <sexp_outputter.h>
 
 /* global / static vars */
 
 static CU_pSuite _current_suite = NULL;
-static FILE * _output = stdout;
-static CU_BOOL _writing_suite = CU_FALSE;
+static FILE * _output = NULL;
+static CU_BOOL _writing_suite;
 
 /* Static function forward decls */
-static CU_ErrorCode sexp_list_all_tests(CU_pTestRegistry pRegistry, const char* szFilename);
+static CU_ErrorCode sexp_list_all_tests(CU_pTestRegistry pRegistry);
 static CU_ErrorCode initialize_result(void);
 static CU_ErrorCode uninitialize_result(void);
 
@@ -65,12 +68,14 @@ void CU_sexp_run_tests(void)
    CU_set_suite_init_failure_handler(sexp_suite_init_failure_message_handler);
    CU_set_suite_cleanup_failure_handler(sexp_suite_cleanup_failure_message_handler);
 
+   _writing_suite = CU_FALSE;
+
    sexp_run_all_tests(NULL);
 
    uninitialize_result();
 }
 
-void CU_set_output(FILE * output)
+void CU_sexp_set_output(FILE * output)
 {
    int fd;
    int oflag;
@@ -83,19 +88,19 @@ void CU_set_output(FILE * output)
       fd = fileno(output);
       oflag = fcntl(fd, F_GETFL);
       if(oflag | O_WRONLY || oflag | O_RDWR) {
-         fprintf(stderr, "%s\n", _("ERROR - output file pointer is not writable."));         
+         fprintf(stderr, "%s\n", "ERROR - output file pointer is not writable.");
       } else {
          _output = output;
       }
    }
 }
 
-CU_ErrorCode CU_list_tests(void)
+CU_ErrorCode CU_sexp_list_tests(void)
 {
-   return automated_list_all_tests(CU_get_registry(), output);
+   return sexp_list_all_tests(CU_get_registry());
 }
 
-static void sexp_list_all_tests(CU_pTestRegistry pRegistry)
+static CU_ErrorCode sexp_list_all_tests(CU_pTestRegistry pRegistry)
 {
    CU_pSuite pSuite = NULL;
    CU_pTest pTest = NULL;
@@ -105,34 +110,34 @@ static void sexp_list_all_tests(CU_pTestRegistry pRegistry)
    if(pRegistry == NULL) {
       CU_set_error(CUE_NOREGISTRY);
    } else {
-      fprintf(output, "(:test-suite-count %u :test-count %u :test-suites (",
+      fprintf(_output, "(:test-suite-count %u :test-count %u :test-suites (",
               pRegistry->uiNumberOfSuites, pRegistry->uiNumberOfTests);
       
       pSuite = pRegistry->pSuite;
       while(pSuite != NULL) {
-         fprintf(output, 
+         fprintf(_output, 
                  "(:test-suite-name \"%s\" :init-val %s :cleanup-val %s "
                  ":active-val %s :test-count %u :tests (",
                  pSuite->pName,
                  (pSuite->pInitializeFunc != NULL ? "t" : "nil"),
-                 (pSuite->pCleanUpFunc != NULL ? "t" : "nil"),
+                 (pSuite->pCleanupFunc != NULL ? "t" : "nil"),
                  (pSuite->fActive != CU_FALSE ? "t" : "nil"),
                  pSuite->uiNumberOfTests);
          
          pTest = pSuite->pTest;
          while(pTest != NULL) {
-            fprintf(output, "(:test-name \"%s\" :active-val %s)",
+            fprintf(_output, "(:test-name \"%s\" :active-val %s)",
                     pTest->pName,
                     (pSuite->fActive != CU_FALSE ? "t" : "nil"));                              
             pTest = pTest->pNext;
          }
 
-         fprintf(output,"))");
+         fprintf(_output,"))");
 
          pSuite = pSuite->pNext;
       }
 
-      fprintf(output "))");
+      fprintf(_output, "))");
    }
    
    return CU_get_error();
@@ -141,14 +146,14 @@ static void sexp_list_all_tests(CU_pTestRegistry pRegistry)
 static CU_ErrorCode initialize_result(void)
 {
    char* szTime;
-   time_t time = 0;
+   time_t t = 0;
 
    CU_set_error(CUE_SUCCESS);
 
-   time(&Time);
-   szTime = ctime(&time);
+   time(&t);
+   szTime = ctime(&t);
 
-   fprintf(output, "(:start-time \"%s\"", szTime);
+   fprintf(_output, "(:start-time \"%s\"", szTime);
 
    return CU_get_error();
 }
@@ -156,11 +161,11 @@ static CU_ErrorCode initialize_result(void)
 static CU_ErrorCode uninitialize_result(void)
 {
    char * szTime;
-   time_t time = 0;
+   time_t t = 0;
    
-   time(&time);
-   szTime = ctime(&time);
-   fprintf(output, ":end-time \"%s\")", szTime);
+   time(&t);
+   szTime = ctime(&t);
+   fprintf(_output, ":end-time \"%s\")", szTime);
 
    return CU_get_error();
 }
@@ -173,7 +178,7 @@ static void sexp_run_all_tests(CU_pTestRegistry pRegistry)
       pOldRegistry = CU_set_registry(pRegistry);   
    }
 
-   fprintf(output, "(:results ");
+   fprintf(_output, "(:results ");
    CU_run_all_tests();
 
    if(pRegistry != NULL) {
@@ -186,9 +191,10 @@ static void sexp_test_start_message_handler(const CU_pTest pTest, const CU_pSuit
    if(_current_suite == NULL || _current_suite != pSuite) {
       if(_writing_suite == CU_TRUE) {
          fprintf(_output, "))");
+         _writing_suite = CU_FALSE;
       }
             
-      fprintf(_output, "(:run-suite-status 'success :suite-name \"%s\"", pSuite->pName);
+      fprintf(_output, "(:run-suite-status 'success :suite-name \"%s\" ", pSuite->pName);
       _writing_suite = CU_TRUE;
       _current_suite = pSuite;
    }
@@ -197,13 +203,13 @@ static void sexp_test_start_message_handler(const CU_pTest pTest, const CU_pSuit
 static void sexp_test_complete_message_handler(const CU_pTest pTest, const CU_pSuite pSuite,
                                                const CU_pFailureRecord pFailure)
 {
-   CU_pFailureRecord curFailure = pFailure
+   CU_pFailureRecord curFailure = pFailure;
 
    if(curFailure != NULL) {
       while(curFailure != NULL) {
          fprintf(_output, 
                  "(:test-name \"%s\" :result 'failure :file-name \"%s\" :line-number %u "
-                 ":condition \"%s\")", 
+                 ":condition \"%s\") ", 
                  pTest->pName, 
                  (curFailure->strFileName == NULL ? curFailure->strFileName : ""),
                  curFailure->uiLineNumber,
@@ -218,43 +224,49 @@ static void sexp_test_complete_message_handler(const CU_pTest pTest, const CU_pS
 
 static void sexp_all_tests_complete_message_handler(const CU_pFailureRecord pFailure)
 {
-   if(_current_suite != NULL && _writing_suite == CU_TRUE)
+   CU_pTestRegistry pRegistry = CU_get_registry();
+   CU_pRunSummary runSummary = CU_get_run_summary();
+
+   if(_current_suite != NULL && _writing_suite == CU_TRUE) {
       fprintf(_output, "))");
+      _writing_suite = CU_FALSE;
+   }
 
    fprintf(_output, 
-           ":suites-summary (:count %u :run-count %u ",
-           ":success-count %u :failed-count %u :skip-count %u)",
+           ":suites-summary (:count %u :run-count %u "
+           ":success-count %u :failed-count %u :skip-count %u) ",
            pRegistry->uiNumberOfSuites,
            runSummary->nSuitesRun,
            runSummary->nSuitesFailed,
            runSummary->nSuitesInactive);
 
    fprintf(_output,
-           ":test-summary (:count %u :run-count %u :success-count %u ",
-           ":failed-count %u skip-count %u)",
+           ":test-summary (:count %u :run-count %u :success-count %u "
+           ":failed-count %u skip-count %u) ",
            pRegistry->uiNumberOfTests,
-           pRunSummary->nTestsRun,
-           pRunSummary->nTestsRun - pRunSummary->nTestsFailed,
-           pRunSummary->nTestsFailed,
-           pRunSummary->nTestInactive);
+           runSummary->nTestsRun,
+           runSummary->nTestsRun - runSummary->nTestsFailed,
+           runSummary->nTestsFailed,
+           runSummary->nTestsInactive);
 
    fprintf(_output,
-           ":assertion-summary (:count %u :run-count %u :success-count %u ",
-           ":failed-count %u)",
-           pRunSummary->nAsserts,
-           pRunSummary->nAsserts,
-           pRunSummary->nAsserts - pRunSummary->nAssertsFailed,
-           pRunSummary->nAssertsFailed);   
+           ":assertion-summary (:count %u :run-count %u :success-count %u "
+           ":failed-count %u) ",
+           runSummary->nAsserts,
+           runSummary->nAsserts,
+           runSummary->nAsserts - runSummary->nAssertsFailed,
+           runSummary->nAssertsFailed);
 }
 
 static void sexp_suite_init_failure_message_handler(const CU_pSuite pSuite)
 {
    if(_writing_suite == CU_TRUE) {
       fprintf(_output, "))");
+      _writing_suite = CU_FALSE;
    }
 
    fprintf(_output, "(:run-suite-status 'failed :suite-name \"%s\" "
-           ":failure-reason \"Suite Initialization Failed\"",
+           ":failure-reason \"Suite Initialization Failed\""),
            pSuite->pName);
            
 }
@@ -263,10 +275,11 @@ static void sexp_suite_cleanup_failure_message_handler(const CU_pSuite pSuite)
 {
    if(_writing_suite == CU_TRUE) {
       fprintf(_output, "))");
+      _writing_suite = CU_FALSE;
    }
 
    fprintf(_output, "(:run-suite-status 'failed :suite-name \"%s\" "
-           ":failure-reason \"Suite Cleanup Failed\"",
+           ":failure-reason \"Suite Cleanup Failed\""),
            pSuite->pName);
 }
 
