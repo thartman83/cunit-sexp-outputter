@@ -21,3 +21,37 @@
 *.i*86
 *.x86_64
 *.hex
+*.la
+*.lo
+*.lai
+*.Plo
+*.Po
+
+# emacs files
+*~
+#*#
+
+# Autoconf files
+aclocal.m4
+compile
+config.guess
+config.log
+config.status
+config.sub
+config/*
+configure
+depcomp
+install-sh
+libtool
+ltmain.sh
+missing
+
+# Automake files
+autom4te.cache/*
+Makefile
+Makefile.in
+
+# Test binaries and scripts
+tests/.libs/test_cunit_sexp_outputter
+tests/output.txt
+tests/test_cunit_sexp_outputter
