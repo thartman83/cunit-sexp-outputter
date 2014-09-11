@@ -30,7 +30,6 @@
 
 /* global / static vars */
 
-static CU_pSuite _current_suite = NULL;
 static FILE * _output = NULL;
 
 // #define LOGGING
@@ -42,18 +41,20 @@ static FILE * _log = NULL;
 #define LOG(msg, ...)
 #endif/*LOGGING*/
 
-static CU_BOOL _writing_suite;
-
 /* Static function forward decls */
 static CU_ErrorCode sexp_list_all_tests(CU_pTestRegistry pRegistry);
 static CU_ErrorCode initialize_result(void);
 static CU_ErrorCode uninitialize_result(void);
 
 static void sexp_run_all_tests(CU_pTestRegistry pRegistry);
-static void sexp_test_start_message_handler(const CU_pTest pTest, const CU_pSuite pSuite);
+
+static void sexp_suite_start_message_handler(const CU_pSuite pSuite);
+static void sexp_suite_complete_message_handler(const CU_pSuite pSuite,
+                                                const CU_pFailureRecord pFailure);
+
 static void sexp_test_complete_message_handler(const CU_pTest pTest, const CU_pSuite pSuite, 
                                                     const CU_pFailureRecord pFailure);
-static void sexp_all_tests_complete_message_handler(const CU_pFailureRecord pFailure);
+
 static void sexp_suite_init_failure_message_handler(const CU_pSuite pSuite);
 static void sexp_suite_cleanup_failure_message_handler(const CU_pSuite pSuite);
 
@@ -72,13 +73,13 @@ void CU_sexp_run_tests(void)
    initialize_result();   
 
    /* Setup handlers */
-   CU_set_test_start_handler(sexp_test_start_message_handler);
    CU_set_test_complete_handler(sexp_test_complete_message_handler);
-   CU_set_all_test_complete_handler(sexp_all_tests_complete_message_handler);
-   CU_set_suite_init_failure_handler(sexp_suite_init_failure_message_handler);
-   CU_set_suite_cleanup_failure_handler(sexp_suite_cleanup_failure_message_handler);
 
-   _writing_suite = CU_FALSE;
+   CU_set_suite_start_handler(sexp_suite_start_message_handler);
+   CU_set_suite_complete_handler(sexp_suite_complete_message_handler);
+
+   CU_set_suite_init_failure_handler(sexp_suite_init_failure_message_handler);
+   CU_set_suite_cleanup_failure_handler(sexp_suite_cleanup_failure_message_handler);   
 
    sexp_run_all_tests(NULL);
 
@@ -216,22 +217,15 @@ static void sexp_run_all_tests(CU_pTestRegistry pRegistry)
    LOG("Leaving sexp_run_all_tests\n");
 }
 
-static void sexp_test_start_message_handler(const CU_pTest pTest, const CU_pSuite pSuite)
+static void sexp_suite_start_message_handler(const CU_pSuite pSuite)
 {
-   LOG("Entering sexp_test_start_message_handler for `%s'\n", pSuite->pName);
-   
-   if(_current_suite == NULL || _current_suite != pSuite) {
-      if(_writing_suite == CU_TRUE) {
-         fprintf(_output, "))");
-         _writing_suite = CU_FALSE;
-      }
-            
-      fprintf(_output, "(:name \"%s\" :status success :tests (", pSuite->pName);
-      _writing_suite = CU_TRUE;
-      _current_suite = pSuite;
-   }
+   fprintf(_output, "(:name \"%s\" :tests (", pSuite->pName);
+}
 
-   LOG("Leaving sexp_test_start_message_handler for `%s'\n", pSuite->pName);
+static void sexp_suite_complete_message_handler(const CU_pSuite pSuite,
+                                                const CU_pFailureRecord pFailure)
+{
+   fprintf(_output, ") :status %s) ", (pFailure == NULL ? "success" : "failure"));
 }
 
 static void sexp_test_complete_message_handler(const CU_pTest pTest, const CU_pSuite pSuite,
@@ -241,86 +235,30 @@ static void sexp_test_complete_message_handler(const CU_pTest pTest, const CU_pS
 
    LOG("Entering sexp_test_complete_message_handler for `%s'\n", pSuite->pName);
 
-   if(curFailure != NULL) {
-      while(curFailure != NULL) {
-         fprintf(_output, 
-                 "(:name \"%s\" :status failure :file-name \"%s\" :line-number %u "
-                 ":condition \"%s\") ", 
-                 pTest->pName, 
-                 (curFailure->strFileName == NULL ? curFailure->strFileName : ""),
-                 curFailure->uiLineNumber,
-                 (curFailure->strCondition == NULL ? curFailure->strCondition : ""));
-         
-         curFailure = curFailure->pNext;
-      }      
-   } else {
+   while(curFailure != NULL) {
+      fprintf(_output, "(:name \"%s\" :status failure :file-name \"%s\" :line-number %u "
+              ":condition \"%s\")", pTest->pName, 
+              (curFailure->strFileName == NULL ? curFailure->strFileName : ""),
+              curFailure->uiLineNumber,
+              (curFailure->strCondition == NULL ? curFailure->strCondition : ""));      
+      curFailure = curFailure->pNext;
+   }
+
+   if(pFailure == NULL) {
       fprintf(_output, "(:name \"%s\" :status success)", pTest->pName);
    }
-
+   
    LOG("Leaving sexp_test_complete_message_handler for `%s'\n", pSuite->pName);
-}
-
-static void sexp_all_tests_complete_message_handler(const CU_pFailureRecord pFailure)
-{
-   CU_pTestRegistry pRegistry = CU_get_registry();
-   CU_pRunSummary runSummary = CU_get_run_summary();
-
-   LOG("Entering sexp_all_tests_complete_message_handler\n");
-
-   if(_current_suite != NULL && _writing_suite == CU_TRUE) {
-      fprintf(_output, "))");
-      _writing_suite = CU_FALSE;
-   }
-
-
-/*   fprintf(_output, 
-           ":suites-summary (:count %u :run-count %u "
-           ":success-count %u :failed-count %u :skip-count %u) ",
-           pRegistry->uiNumberOfSuites,
-           runSummary->nSuitesRun,
-           runSummary->nSuitesRun - runSummary->nSuitesFailed,
-           runSummary->nSuitesFailed,
-           runSummary->nSuitesInactive);
-
-   fprintf(_output,
-           ":test-summary (:count %u :run-count %u :success-count %u "
-           ":failed-count %u skip-count %u) ",
-           pRegistry->uiNumberOfTests,
-           runSummary->nTestsRun,
-           runSummary->nTestsRun - runSummary->nTestsFailed,
-           runSummary->nTestsFailed,
-           runSummary->nTestsInactive);
-
-   fprintf(_output,
-           ":assertion-summary (:count %u :run-count %u :success-count %u "
-           ":failed-count %u) ",
-           runSummary->nAsserts,
-           runSummary->nAsserts,
-           runSummary->nAsserts - runSummary->nAssertsFailed,
-           runSummary->nAssertsFailed); */
-
-   LOG("Leaving sexp_all_tests_complete_message_handler\n");
 }
 
 static void sexp_suite_init_failure_message_handler(const CU_pSuite pSuite)
 {
-   if(_writing_suite == CU_TRUE) {
-      fprintf(_output, ")");
-      _writing_suite = CU_FALSE;
-   }
-
    fprintf(_output, "(:name \"%s\" :status failed :log \"Suite Initialization Failed\")",
-           pSuite->pName);
-           
+           pSuite->pName);           
 }
 
 static void sexp_suite_cleanup_failure_message_handler(const CU_pSuite pSuite)
 {
-   if(_writing_suite == CU_TRUE) {
-      fprintf(_output, ")");
-      _writing_suite = CU_FALSE;
-   }
-
    fprintf(_output, "(:name \"%s\" :status failed :log \"Suite Cleanup Failed\")",
            pSuite->pName);
 }
